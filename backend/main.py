@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import yt_dlp
 from typing import Optional
 import json
+from scipy.signal import medfilt
 
 app = FastAPI()
 
@@ -26,6 +27,36 @@ class YouTubeRequest(BaseModel):
 class PitchPoint(BaseModel):
     time: float
     frequency: float
+
+def smooth_pitch_contour(pitch_contour, kernel_size=5):
+    """
+    Apply median filtering to smooth pitch contour
+    
+    Args:
+        pitch_contour: List of pitch points with 'time' and 'frequency' keys
+        kernel_size: Size of the median filter window (odd number, default 5)
+    
+    Returns:
+        Smoothed pitch contour
+    """
+    if len(pitch_contour) < kernel_size:
+        return pitch_contour
+    
+    # Extract frequencies
+    frequencies = np.array([p['frequency'] for p in pitch_contour])
+    
+    # Apply median filter
+    smoothed_frequencies = medfilt(frequencies, kernel_size=kernel_size)
+    
+    # Reconstruct pitch contour with smoothed frequencies
+    smoothed_contour = []
+    for i, point in enumerate(pitch_contour):
+        smoothed_contour.append({
+            'time': point['time'],
+            'frequency': float(smoothed_frequencies[i])
+        })
+    
+    return smoothed_contour
 
 @app.post("/api/extract-pitch")
 async def extract_pitch(request: YouTubeRequest):
@@ -83,6 +114,9 @@ async def extract_pitch(request: YouTubeRequest):
                         'time': float(time),
                         'frequency': float(pitch)
                     })
+            
+            # Apply median filtering to smooth the pitch contour
+            pitch_contour = smooth_pitch_contour(pitch_contour, kernel_size=5)
             
             return {
                 'status': 'success',
