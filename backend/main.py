@@ -4,7 +4,7 @@ import numpy as np
 import librosa
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import yt_dlp
 from typing import Optional
 import json
@@ -23,6 +23,13 @@ app.add_middleware(
 
 class YouTubeRequest(BaseModel):
     url: str
+    
+    @field_validator('url')
+    @classmethod
+    def url_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('URL cannot be empty')
+        return v
 
 class PitchPoint(BaseModel):
     time: float
