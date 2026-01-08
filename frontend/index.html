@@ -63,6 +63,47 @@
             <span class="user-pitch">Your Pitch</span>
             <span class="playhead">Playhead</span>
         </div>
+        
+        <div class="playback-controls">
+            <div class="playback-header">
+                <h3>Audio Playback</h3>
+            </div>
+            
+            <div class="playback-buttons">
+                <button id="playBtn" disabled title="Play">▶ Play</button>
+                <button id="pauseBtn" disabled title="Pause">⏸ Pause</button>
+                <button id="stopPlaybackBtn" disabled title="Stop">⏹ Stop</button>
+            </div>
+            
+            <div class="playback-options">
+                <div class="playback-option">
+                    <label for="speedSelect">Speed:</label>
+                    <select id="speedSelect">
+                        <option value="0.5">0.5x</option>
+                        <option value="0.75">0.75x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                    </select>
+                </div>
+                
+                <div class="playback-option">
+                    <label for="modeSelect">Mode:</label>
+                    <select id="modeSelect">
+                        <option value="target" selected>Target Only</option>
+                        <option value="user">User Only</option>
+                        <option value="both">Both</option>
+                    </select>
+                </div>
+                
+                <div class="playback-option">
+                    <label for="volumeSlider">Volume:</label>
+                    <input type="range" id="volumeSlider" min="0" max="100" value="30" step="1">
+                    <span id="volumeValue">30%</span>
+                </div>
+            </div>
+        </div>
     </div>
     
     <script src="app.js"></script>

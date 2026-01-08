@@ -245,3 +245,94 @@ canvas:active {
     font-weight: 600;
     color: #333;
 }
+
+/* Playback Controls */
+.playback-controls {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.playback-header h3 {
+    margin: 0 0 15px 0;
+    color: #333;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.playback-buttons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    justify-content: center;
+}
+
+.playback-buttons button {
+    min-width: 100px;
+    padding: 10px 20px;
+}
+
+.playback-options {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.playback-option {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.playback-option label {
+    font-weight: 600;
+    color: #666;
+    font-size: 14px;
+}
+
+.playback-option select {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 2px solid #ddd;
+    background: white;
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.3s;
+}
+
+.playback-option select:hover {
+    border-color: #667eea;
+}
+
+.playback-option select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.playback-option input[type="range"] {
+    width: 100px;
+    cursor: pointer;
+}
+
+.playback-option #volumeValue {
+    min-width: 40px;
+    font-weight: 600;
+    color: #333;
+}
+
+/* Button states for playback controls */
+.playback-buttons button:disabled {
+    opacity: 0.5;
+}
+
+.playback-buttons button:not(:disabled):hover {
+    transform: scale(1.05);
+    transition: transform 0.2s;
+}
+
+.playback-buttons button:not(:disabled):active {
+    transform: scale(0.95);
+}

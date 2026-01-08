@@ -1,5 +1,370 @@
 // Pitch Matcher - Interactive Main Application Logic
 
+/**
+ * PianoSynthesizer - Generates piano-like sounds using Web Audio API
+ * Uses OscillatorNode with ADSR envelope for realistic tone
+ */
+class PianoSynthesizer {
+    constructor(audioContext) {
+        this.audioContext = audioContext;
+        this.masterGain = audioContext.createGain();
+        this.masterGain.connect(audioContext.destination);
+        this.masterGain.gain.value = 0.3; // Default volume (30%)
+        this.activeNotes = new Map(); // Track active oscillators for cleanup
+    }
+    
+    /**
+     * Convert note name (e.g., "C4") to frequency in Hz
+     * Uses equal temperament: f = 440 * 2^((n-69)/12)
+     */
+    noteToFrequency(noteName) {
+        const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const match = noteName.match(/^([A-G]#?)(-?\d+)$/);
+        if (!match) return 440; // Default to A4
+        
+        const [, note, octave] = match;
+        const noteIndex = notes.indexOf(note);
+        if (noteIndex === -1) return 440;
+        
+        // Calculate semitone position (A4 = 69)
+        const semitone = noteIndex + (parseInt(octave) + 1) * 12;
+        
+        return 440 * Math.pow(2, (semitone - 69) / 12);
+    }
+    
+    /**
+     * Play a piano note with ADSR envelope
+     * @param {string} noteName - Note to play (e.g., "C4")
+     * @param {number} duration - Duration in seconds
+     * @param {number} startTime - When to start (relative to audioContext.currentTime)
+     * @returns {string} noteId - Unique identifier for this note
+     */
+    playNote(noteName, duration = 0.5, startTime = 0) {
+        const frequency = this.noteToFrequency(noteName);
+        const actualStartTime = this.audioContext.currentTime + startTime;
+        
+        // Create oscillator for fundamental frequency
+        const osc = this.audioContext.createOscillator();
+        osc.frequency.value = frequency;
+        osc.type = 'triangle'; // Piano-like timbre
+        
+        // Add subtle harmonic for richness
+        const osc2 = this.audioContext.createOscillator();
+        osc2.frequency.value = frequency * 2; // Octave harmonic
+        osc2.type = 'sine';
+        
+        // Create gain nodes for ADSR envelope
+        const gainNode = this.audioContext.createGain();
+        const harmGainNode = this.audioContext.createGain();
+        
+        gainNode.gain.value = 0;
+        harmGainNode.gain.value = 0;
+        
+        // Connect audio graph
+        osc.connect(gainNode);
+        osc2.connect(harmGainNode);
+        gainNode.connect(this.masterGain);
+        harmGainNode.connect(this.masterGain);
+        
+        // ADSR envelope parameters
+        const attack = 0.01;  // Quick onset
+        const decay = 0.1;    // Natural decay
+        const sustain = 0.7;  // 70% volume sustain
+        const release = 0.3;  // Gradual fade
+        
+        // Apply ADSR to fundamental
+        gainNode.gain.setValueAtTime(0, actualStartTime);
+        gainNode.gain.linearRampToValueAtTime(0.8, actualStartTime + attack);
+        gainNode.gain.linearRampToValueAtTime(sustain * 0.8, actualStartTime + attack + decay);
+        gainNode.gain.setValueAtTime(sustain * 0.8, actualStartTime + Math.max(duration - release, attack + decay));
+        gainNode.gain.linearRampToValueAtTime(0, actualStartTime + duration);
+        
+        // Apply ADSR to harmonic (quieter)
+        harmGainNode.gain.setValueAtTime(0, actualStartTime);
+        harmGainNode.gain.linearRampToValueAtTime(0.2, actualStartTime + attack);
+        harmGainNode.gain.linearRampToValueAtTime(sustain * 0.2, actualStartTime + attack + decay);
+        harmGainNode.gain.setValueAtTime(sustain * 0.2, actualStartTime + Math.max(duration - release, attack + decay));
+        harmGainNode.gain.linearRampToValueAtTime(0, actualStartTime + duration);
+        
+        // Schedule oscillator start and stop
+        osc.start(actualStartTime);
+        osc.stop(actualStartTime + duration);
+        osc2.start(actualStartTime);
+        osc2.stop(actualStartTime + duration);
+        
+        // Cleanup when finished
+        const noteId = `${noteName}-${Date.now()}-${Math.random()}`;
+        this.activeNotes.set(noteId, { osc, osc2, gainNode, harmGainNode });
+        
+        osc.onended = () => {
+            gainNode.disconnect();
+            harmGainNode.disconnect();
+            this.activeNotes.delete(noteId);
+        };
+        
+        return noteId;
+    }
+    
+    /**
+     * Set master volume (0.0 to 1.0)
+     */
+    setVolume(volume) {
+        const clampedVolume = Math.max(0, Math.min(1, volume));
+        this.masterGain.gain.setValueAtTime(clampedVolume, this.audioContext.currentTime);
+    }
+    
+    /**
+     * Stop all currently playing notes
+     */
+    stopAll() {
+        const currentTime = this.audioContext.currentTime;
+        
+        for (const [noteId, { osc, osc2, gainNode, harmGainNode }] of this.activeNotes) {
+            try {
+                // Fade out quickly to avoid clicks
+                gainNode.gain.cancelScheduledValues(currentTime);
+                gainNode.gain.setValueAtTime(gainNode.gain.value, currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, currentTime + 0.05);
+                
+                harmGainNode.gain.cancelScheduledValues(currentTime);
+                harmGainNode.gain.setValueAtTime(harmGainNode.gain.value, currentTime);
+                harmGainNode.gain.linearRampToValueAtTime(0, currentTime + 0.05);
+                
+                osc.stop(currentTime + 0.05);
+                osc2.stop(currentTime + 0.05);
+            } catch (e) {
+                // Oscillator may already be stopped
+                console.warn('Error stopping note:', e);
+            }
+        }
+        
+        this.activeNotes.clear();
+    }
+}
+
+/**
+ * PlaybackController - Manages timing and playback of note sequences
+ */
+class PlaybackController {
+    constructor(synthesizer, onUpdate) {
+        this.synthesizer = synthesizer;
+        this.onUpdate = onUpdate; // Callback for playhead updates
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.currentTime = 0;
+        this.speed = 1.0;
+        this.noteSequence = [];
+        this.scheduledNotes = [];
+        this.playbackStartTime = 0;
+        this.pauseTime = 0;
+        this.animationFrameId = null;
+    }
+    
+    /**
+     * Convert pitch data to note sequence with durations
+     * Groups consecutive same notes into blocks
+     */
+    loadNotes(pitchData, frequencyToNoteFunc) {
+        if (!pitchData || pitchData.length === 0) {
+            this.noteSequence = [];
+            return;
+        }
+        
+        const noteBlocks = [];
+        let currentNote = null;
+        let startTime = 0;
+        
+        for (const point of pitchData) {
+            const note = frequencyToNoteFunc(point.frequency);
+            
+            if (note !== currentNote) {
+                if (currentNote) {
+                    noteBlocks.push({
+                        note: currentNote,
+                        startTime: startTime,
+                        duration: Math.max(0.05, point.time - startTime) // Min 50ms duration
+                    });
+                }
+                currentNote = note;
+                startTime = point.time;
+            }
+        }
+        
+        // Add final note
+        if (currentNote) {
+            const lastPoint = pitchData[pitchData.length - 1];
+            noteBlocks.push({
+                note: currentNote,
+                startTime: startTime,
+                duration: Math.max(0.1, lastPoint.time - startTime)
+            });
+        }
+        
+        this.noteSequence = noteBlocks;
+    }
+    
+    /**
+     * Start or resume playback
+     */
+    play() {
+        if (this.isPlaying) return;
+        if (this.noteSequence.length === 0) return;
+        
+        this.isPlaying = true;
+        this.isPaused = false;
+        
+        const audioContext = this.synthesizer.audioContext;
+        
+        // Resume AudioContext if suspended (browser autoplay policy)
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+        
+        // Calculate playback start time
+        if (this.currentTime === 0) {
+            // Starting fresh
+            this.playbackStartTime = audioContext.currentTime;
+        } else {
+            // Resuming from pause
+            this.playbackStartTime = audioContext.currentTime - (this.currentTime / this.speed);
+        }
+        
+        // Schedule all notes
+        this.scheduleNotes();
+        
+        // Start playhead animation
+        this.updatePlayhead();
+    }
+    
+    /**
+     * Pause playback
+     */
+    pause() {
+        if (!this.isPlaying || this.isPaused) return;
+        
+        this.isPlaying = false;
+        this.isPaused = true;
+        this.pauseTime = this.currentTime;
+        
+        // Stop all scheduled notes
+        this.synthesizer.stopAll();
+        this.scheduledNotes = [];
+        
+        // Stop animation
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+    }
+    
+    /**
+     * Stop playback and reset to beginning
+     */
+    stop() {
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.currentTime = 0;
+        this.pauseTime = 0;
+        
+        // Stop all notes
+        this.synthesizer.stopAll();
+        this.scheduledNotes = [];
+        
+        // Stop animation
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        
+        // Update UI to show reset
+        if (this.onUpdate) {
+            this.onUpdate(0);
+        }
+    }
+    
+    /**
+     * Set playback speed (0.5x to 2x)
+     */
+    setSpeed(speed) {
+        const wasPlaying = this.isPlaying;
+        
+        if (wasPlaying) {
+            this.pause();
+        }
+        
+        this.speed = Math.max(0.5, Math.min(2.0, speed));
+        
+        if (wasPlaying) {
+            this.play();
+        }
+    }
+    
+    /**
+     * Schedule notes for playback
+     */
+    scheduleNotes() {
+        const audioContext = this.synthesizer.audioContext;
+        const currentAudioTime = audioContext.currentTime;
+        
+        // Clear old scheduled notes
+        this.scheduledNotes = [];
+        
+        // Schedule each note in the sequence
+        for (const noteBlock of this.noteSequence) {
+            const scheduleTime = (noteBlock.startTime / this.speed) - (this.currentTime / this.speed);
+            const duration = noteBlock.duration / this.speed;
+            
+            // Only schedule notes that haven't played yet and are in the near future
+            if (scheduleTime + duration > 0) {
+                const noteId = this.synthesizer.playNote(
+                    noteBlock.note,
+                    duration,
+                    scheduleTime
+                );
+                
+                this.scheduledNotes.push(noteId);
+            }
+        }
+    }
+    
+    /**
+     * Update playhead position and call update callback
+     */
+    updatePlayhead() {
+        if (!this.isPlaying) return;
+        
+        const audioContext = this.synthesizer.audioContext;
+        const elapsed = (audioContext.currentTime - this.playbackStartTime) * this.speed;
+        this.currentTime = elapsed;
+        
+        // Check if playback finished
+        if (this.noteSequence.length > 0) {
+            const lastNote = this.noteSequence[this.noteSequence.length - 1];
+            const totalDuration = lastNote.startTime + lastNote.duration;
+            
+            if (this.currentTime >= totalDuration) {
+                this.stop();
+                return;
+            }
+        }
+        
+        // Call update callback
+        if (this.onUpdate) {
+            this.onUpdate(this.currentTime);
+        }
+        
+        // Continue animation at 60 FPS
+        this.animationFrameId = requestAnimationFrame(() => this.updatePlayhead());
+    }
+    
+    /**
+     * Get current playback time
+     */
+    getCurrentTime() {
+        return this.currentTime;
+    }
+}
+
 class PitchMatcher {
     constructor() {
         // API configuration
@@ -13,6 +378,13 @@ class PitchMatcher {
         this.analyser = null;
         this.microphone = null;
         this.animationFrame = null;
+        
+        // Playback components
+        this.playbackAudioContext = null; // Separate context for playback
+        this.pianoSynthesizer = null;
+        this.playbackController = null;
+        this.playheadPosition = 0;
+        this.isPlaybackActive = false;
         
         // View state (pan and zoom)
         this.viewState = {
@@ -72,7 +444,17 @@ class PitchMatcher {
         this.tooltip = document.getElementById('tooltip');
         this.notesTooltip = document.getElementById('notesTooltip');
         
+        // Playback UI elements
+        this.playBtn = document.getElementById('playBtn');
+        this.pauseBtn = document.getElementById('pauseBtn');
+        this.stopPlaybackBtn = document.getElementById('stopPlaybackBtn');
+        this.speedSelect = document.getElementById('speedSelect');
+        this.modeSelect = document.getElementById('modeSelect');
+        this.volumeSlider = document.getElementById('volumeSlider');
+        this.volumeValue = document.getElementById('volumeValue');
+        
         this.bindEvents();
+        this.bindPlaybackEvents();
     }
     
     setupCanvas() {
@@ -125,6 +507,160 @@ class PitchMatcher {
             this.setupNotesCanvas();
             this.draw();
         });
+    }
+    
+    /**
+     * Bind playback control event listeners
+     */
+    bindPlaybackEvents() {
+        if (!this.playBtn || !this.pauseBtn || !this.stopPlaybackBtn) return;
+        
+        this.playBtn.addEventListener('click', () => this.handlePlay());
+        this.pauseBtn.addEventListener('click', () => this.handlePause());
+        this.stopPlaybackBtn.addEventListener('click', () => this.handleStopPlayback());
+        this.speedSelect.addEventListener('change', (e) => this.handleSpeedChange(e));
+        this.volumeSlider.addEventListener('input', (e) => this.handleVolumeChange(e));
+        this.modeSelect.addEventListener('change', (e) => this.handleModeChange(e));
+    }
+    
+    /**
+     * Handle play button click
+     */
+    handlePlay() {
+        // Initialize audio context if needed (requires user gesture)
+        if (!this.playbackAudioContext) {
+            try {
+                this.playbackAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                this.pianoSynthesizer = new PianoSynthesizer(this.playbackAudioContext);
+                this.playbackController = new PlaybackController(
+                    this.pianoSynthesizer,
+                    (time) => this.updatePlayheadCallback(time)
+                );
+            } catch (error) {
+                console.error('Failed to create AudioContext:', error);
+                this.showStatus('Audio playback not supported in this browser', 'error');
+                return;
+            }
+        }
+        
+        // Load notes based on selected mode
+        const mode = this.modeSelect.value;
+        let notesToPlay = [];
+        
+        if (mode === 'target' && this.targetPitchData.length > 0) {
+            notesToPlay = this.targetPitchData;
+        } else if (mode === 'user' && this.userPitchData.length > 0) {
+            notesToPlay = this.userPitchData;
+        } else if (mode === 'both') {
+            // Combine both datasets
+            if (this.targetPitchData.length > 0 && this.userPitchData.length > 0) {
+                // Play both simultaneously by loading them separately
+                // For MVP, we'll just play target (enhancement: overlay both)
+                notesToPlay = this.targetPitchData;
+                // TODO: Implement dual playback in future enhancement
+            } else if (this.targetPitchData.length > 0) {
+                notesToPlay = this.targetPitchData;
+            } else if (this.userPitchData.length > 0) {
+                notesToPlay = this.userPitchData;
+            }
+        }
+        
+        if (notesToPlay.length === 0) {
+            this.showStatus('No pitch data available for playback', 'error');
+            return;
+        }
+        
+        // Load notes into playback controller
+        this.playbackController.loadNotes(notesToPlay, (freq) => this.frequencyToNote(freq));
+        
+        // Set speed and volume
+        this.playbackController.setSpeed(parseFloat(this.speedSelect.value));
+        this.pianoSynthesizer.setVolume(parseFloat(this.volumeSlider.value) / 100);
+        
+        // Start playback
+        this.playbackController.play();
+        
+        // Update UI state
+        this.isPlaybackActive = true;
+        this.playBtn.disabled = true;
+        this.pauseBtn.disabled = false;
+        this.stopPlaybackBtn.disabled = false;
+    }
+    
+    /**
+     * Handle pause button click
+     */
+    handlePause() {
+        if (!this.playbackController) return;
+        
+        if (this.playbackController.isPlaying) {
+            this.playbackController.pause();
+            this.playBtn.disabled = false;
+            this.pauseBtn.disabled = true;
+            this.playBtn.textContent = '▶ Resume';
+        }
+    }
+    
+    /**
+     * Handle stop button click
+     */
+    handleStopPlayback() {
+        if (!this.playbackController) return;
+        
+        this.playbackController.stop();
+        this.isPlaybackActive = false;
+        this.playheadPosition = 0;
+        
+        // Update UI state
+        this.playBtn.disabled = false;
+        this.pauseBtn.disabled = true;
+        this.stopPlaybackBtn.disabled = true;
+        this.playBtn.textContent = '▶ Play';
+        
+        // Redraw to remove playhead
+        this.draw();
+    }
+    
+    /**
+     * Handle speed selection change
+     */
+    handleSpeedChange(e) {
+        const speed = parseFloat(e.target.value);
+        if (this.playbackController) {
+            this.playbackController.setSpeed(speed);
+        }
+    }
+    
+    /**
+     * Handle volume slider change
+     */
+    handleVolumeChange(e) {
+        const volume = parseFloat(e.target.value);
+        this.volumeValue.textContent = `${volume}%`;
+        
+        if (this.pianoSynthesizer) {
+            this.pianoSynthesizer.setVolume(volume / 100);
+        }
+    }
+    
+    /**
+     * Handle mode selection change
+     */
+    handleModeChange(e) {
+        // Mode change takes effect on next playback
+        // If currently playing, restart with new mode
+        if (this.playbackController && this.playbackController.isPlaying) {
+            this.handleStopPlayback();
+            // Auto-restart would be jarring, so just stop
+        }
+    }
+    
+    /**
+     * Playhead update callback from PlaybackController
+     */
+    updatePlayheadCallback(time) {
+        this.playheadPosition = time;
+        this.draw(); // Redraw to show updated playhead
     }
     
     // Pan and zoom methods
@@ -413,6 +949,12 @@ class PitchMatcher {
                 this.targetPitchData = data.pitch_data;
                 this.showStatus(`Successfully extracted pitch data! Duration: ${data.duration.toFixed(1)}s`, 'success');
                 this.startBtn.disabled = false;
+                
+                // Enable playback controls
+                if (this.playBtn) {
+                    this.playBtn.disabled = false;
+                }
+                
                 this.resetView();
             } else {
                 throw new Error(data.detail || 'Unknown error occurred');
@@ -613,6 +1155,11 @@ class PitchMatcher {
         // Restore context (undo transformations for fixed elements)
         this.ctx.restore();
         
+        // Draw playhead if playback is active
+        if (this.isPlaybackActive && this.playheadPosition > 0) {
+            this.drawPlayhead(width, height);
+        }
+        
         // Draw notes plot
         this.drawNotesCanvas();
     }
@@ -647,6 +1194,11 @@ class PitchMatcher {
         
         // Restore context
         this.notesCtx.restore();
+        
+        // Draw playhead on notes canvas if playback is active
+        if (this.isPlaybackActive && this.playheadPosition > 0) {
+            this.drawPlayheadNotes(width, height);
+        }
     }
     
     drawGrid(width, height) {
@@ -925,6 +1477,66 @@ class PitchMatcher {
     showStatus(message, type) {
         this.statusDiv.textContent = message;
         this.statusDiv.className = `status ${type}`;
+    }
+    
+    /**
+     * Draw playhead indicator on frequency canvas
+     */
+    drawPlayhead(width, height) {
+        if (this.targetPitchData.length === 0) return;
+        
+        const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+        const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+        const timeRange = maxTime - minTime || 1;
+        
+        // Calculate X position from playhead time
+        const x = ((this.playheadPosition - minTime) / timeRange) * width;
+        
+        // Only draw if within visible bounds
+        if (x >= 0 && x <= width) {
+            this.ctx.save();
+            this.ctx.strokeStyle = '#FFD700'; // Gold color
+            this.ctx.lineWidth = 2;
+            this.ctx.setLineDash([5, 5]);
+            this.ctx.globalAlpha = 0.8;
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, 0);
+            this.ctx.lineTo(x, height);
+            this.ctx.stroke();
+            
+            this.ctx.restore();
+        }
+    }
+    
+    /**
+     * Draw playhead indicator on notes canvas
+     */
+    drawPlayheadNotes(width, height) {
+        if (this.targetPitchData.length === 0) return;
+        
+        const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+        const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+        const timeRange = maxTime - minTime || 1;
+        
+        // Calculate X position from playhead time
+        const x = ((this.playheadPosition - minTime) / timeRange) * width;
+        
+        // Only draw if within visible bounds
+        if (x >= 0 && x <= width) {
+            this.notesCtx.save();
+            this.notesCtx.strokeStyle = '#FFD700'; // Gold color
+            this.notesCtx.lineWidth = 2;
+            this.notesCtx.setLineDash([5, 5]);
+            this.notesCtx.globalAlpha = 0.8;
+            
+            this.notesCtx.beginPath();
+            this.notesCtx.moveTo(x, 0);
+            this.notesCtx.lineTo(x, height);
+            this.notesCtx.stroke();
+            
+            this.notesCtx.restore();
+        }
     }
 }
 
