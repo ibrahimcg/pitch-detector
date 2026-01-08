@@ -36,10 +36,25 @@ class PitchMatcher {
             note: ''
         };
         
-        // Canvas setup
+        // Canvas setup - Frequency plot
         this.canvas = document.getElementById('pitchCanvas');
         this.ctx = this.canvas.getContext('2d');
         this.setupCanvas();
+        
+        // Canvas setup - Notes plot
+        this.notesCanvas = document.getElementById('notesCanvas');
+        this.notesCtx = this.notesCanvas.getContext('2d');
+        this.setupNotesCanvas();
+        
+        // Tooltip state for notes plot
+        this.notesTooltipData = {
+            visible: false,
+            x: 0,
+            y: 0,
+            time: 0,
+            frequency: 0,
+            note: ''
+        };
         
         // UI elements
         this.youtubeUrlInput = document.getElementById('youtubeUrl');
@@ -55,6 +70,7 @@ class PitchMatcher {
         this.currentTimeSpan = document.getElementById('currentTime');
         this.zoomLevelSpan = document.getElementById('zoomLevel');
         this.tooltip = document.getElementById('tooltip');
+        this.notesTooltip = document.getElementById('notesTooltip');
         
         this.bindEvents();
     }
@@ -69,6 +85,16 @@ class PitchMatcher {
         this.canvas.height = rect.height;
     }
     
+    setupNotesCanvas() {
+        // Set canvas size to match frequency plot
+        const rect = this.notesCanvas.getBoundingClientRect();
+        this.notesCanvas.width = rect.width * 2;
+        this.notesCanvas.height = rect.height * 2;
+        this.notesCtx.scale(2, 2);
+        this.notesCanvas.width = rect.width;
+        this.notesCanvas.height = rect.height;
+    }
+    
     bindEvents() {
         this.processBtn.addEventListener('click', () => this.processYouTubeUrl());
         this.startBtn.addEventListener('click', () => this.startMicrophone());
@@ -79,16 +105,24 @@ class PitchMatcher {
         this.zoomOutBtn.addEventListener('click', () => this.zoomOut());
         this.resetViewBtn.addEventListener('click', () => this.resetView());
         
-        // Canvas interactions
+        // Canvas interactions - Frequency plot
         this.canvas.addEventListener('wheel', (e) => this.handleWheel(e));
         this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
         this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
         this.canvas.addEventListener('mouseleave', (e) => this.handleMouseLeave(e));
         
+        // Canvas interactions - Notes plot
+        this.notesCanvas.addEventListener('wheel', (e) => this.handleWheelNotes(e));
+        this.notesCanvas.addEventListener('mousedown', (e) => this.handleMouseDownNotes(e));
+        this.notesCanvas.addEventListener('mousemove', (e) => this.handleMouseMoveNotes(e));
+        this.notesCanvas.addEventListener('mouseup', (e) => this.handleMouseUpNotes(e));
+        this.notesCanvas.addEventListener('mouseleave', (e) => this.handleMouseLeaveNotes(e));
+        
         // Handle window resize
         window.addEventListener('resize', () => {
             this.setupCanvas();
+            this.setupNotesCanvas();
             this.draw();
         });
     }
@@ -156,6 +190,52 @@ class PitchMatcher {
         this.tooltip.style.display = 'none';
         this.tooltipData.visible = false;
         this.canvas.style.cursor = 'grab';
+    }
+    
+    // Notes canvas event handlers (synchronized with frequency plot)
+    handleWheelNotes(e) {
+        this.handleWheel(e);
+    }
+    
+    handleMouseDownNotes(e) {
+        this.viewState.isDragging = true;
+        this.viewState.lastMouseX = e.clientX;
+        this.viewState.lastMouseY = e.clientY;
+        this.notesCanvas.style.cursor = 'grabbing';
+    }
+    
+    handleMouseMoveNotes(e) {
+        const rect = this.notesCanvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        if (this.viewState.isDragging) {
+            const deltaX = e.clientX - this.viewState.lastMouseX;
+            const deltaY = e.clientY - this.viewState.lastMouseY;
+            
+            this.viewState.offsetX += deltaX;
+            this.viewState.offsetY += deltaY;
+            
+            this.viewState.lastMouseX = e.clientX;
+            this.viewState.lastMouseY = e.clientY;
+            
+            this.draw();
+        } else {
+            // Update notes tooltip
+            this.updateNotesTooltip(mouseX, mouseY);
+        }
+    }
+    
+    handleMouseUpNotes(e) {
+        this.viewState.isDragging = false;
+        this.notesCanvas.style.cursor = 'grab';
+    }
+    
+    handleMouseLeaveNotes(e) {
+        this.viewState.isDragging = false;
+        this.notesTooltip.style.display = 'none';
+        this.notesTooltipData.visible = false;
+        this.notesCanvas.style.cursor = 'grab';
     }
     
     zoomIn() {
@@ -243,6 +323,64 @@ class PitchMatcher {
         } else {
             this.tooltip.style.display = 'none';
             this.tooltipData.visible = false;
+        }
+    }
+    
+    updateNotesTooltip(mouseX, mouseY) {
+        if (this.targetPitchData.length === 0) {
+            this.notesTooltip.style.display = 'none';
+            this.notesTooltipData.visible = false;
+            return;
+        }
+        
+        const width = this.notesCanvas.offsetWidth;
+        const height = this.notesCanvas.offsetHeight;
+        
+        // Get visible time range
+        const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+        const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+        const timeRange = maxTime - minTime || 1;
+        
+        // Calculate time at mouse position
+        const visibleWidth = width * this.viewState.zoom;
+        const time = ((mouseX - this.viewState.offsetX) / visibleWidth) * timeRange + minTime;
+        
+        // Find closest pitch point
+        let closestPoint = null;
+        let minDist = Infinity;
+        
+        for (const point of this.targetPitchData) {
+            const dist = Math.abs(point.time - time);
+            if (dist < minDist) {
+                minDist = dist;
+                closestPoint = point;
+            }
+        }
+        
+        if (closestPoint && minDist < 0.5) { // Only show if close enough
+            const note = this.frequencyToNote(closestPoint.frequency);
+            
+            this.notesTooltipData = {
+                visible: true,
+                x: mouseX + 15,
+                y: mouseY + 15,
+                time: closestPoint.time,
+                frequency: closestPoint.frequency,
+                note: note
+            };
+            
+            // Update tooltip position and content
+            this.notesTooltip.style.display = 'block';
+            this.notesTooltip.style.left = `${mouseX + 15}px`;
+            this.notesTooltip.style.top = `${mouseY + 15}px`;
+            this.notesTooltip.innerHTML = `
+                <div class="time">Time: ${closestPoint.time.toFixed(2)}s</div>
+                <div class="note">Note: ${note}</div>
+                <div class="frequency">${closestPoint.frequency.toFixed(1)} Hz</div>
+            `;
+        } else {
+            this.notesTooltip.style.display = 'none';
+            this.notesTooltipData.visible = false;
         }
     }
     
@@ -444,6 +582,7 @@ class PitchMatcher {
     }
     
     draw() {
+        // Draw frequency plot
         const width = this.canvas.offsetWidth;
         const height = this.canvas.offsetHeight;
         
@@ -473,6 +612,41 @@ class PitchMatcher {
         
         // Restore context (undo transformations for fixed elements)
         this.ctx.restore();
+        
+        // Draw notes plot
+        this.drawNotesCanvas();
+    }
+    
+    drawNotesCanvas() {
+        const width = this.notesCanvas.offsetWidth;
+        const height = this.notesCanvas.offsetHeight;
+        
+        // Clear canvas
+        this.notesCtx.fillStyle = '#1a1a2e';
+        this.notesCtx.fillRect(0, 0, width, height);
+        
+        // Save context for transformations
+        this.notesCtx.save();
+        
+        // Apply pan and zoom transformations (X-axis synchronized with frequency plot)
+        this.notesCtx.translate(this.viewState.offsetX, 0);
+        this.notesCtx.scale(this.viewState.zoom, 1);
+        
+        // Draw notes grid
+        this.drawNotesGrid(width, height);
+        
+        // Draw target notes (from YouTube)
+        if (this.targetPitchData.length > 0) {
+            this.drawNotesPlot(this.targetPitchData, 'rgba(0, 255, 136, 0.8)', width, height);
+        }
+        
+        // Draw user notes (from microphone)
+        if (this.userPitchData.length > 0) {
+            this.drawNotesPlot(this.userPitchData, 'rgba(255, 107, 107, 0.8)', width, height);
+        }
+        
+        // Restore context
+        this.notesCtx.restore();
     }
     
     drawGrid(width, height) {
@@ -587,6 +761,165 @@ class PitchMatcher {
         const logFreq = Math.log(frequency);
         
         return height - ((logFreq - logMin) / (logMax - logMin)) * height;
+    }
+    
+    /**
+     * Convert note string (e.g., "C4", "D#5") to Y position on notes canvas
+     * Note range: C1 to C8 (88 semitones)
+     */
+    noteToY(noteString, height) {
+        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        
+        // Parse note string
+        const octave = parseInt(noteString.slice(-1));
+        const noteName = noteString.slice(0, -1);
+        const noteIndex = noteNames.indexOf(noteName);
+        
+        if (noteIndex === -1) return height / 2; // Default to middle if invalid
+        
+        // Calculate semitone position (C1 = 0, C8 = 84)
+        const minOctave = 1;
+        const maxOctave = 8;
+        const totalSemitones = (maxOctave - minOctave) * 12;
+        const semitone = (octave - minOctave) * 12 + noteIndex;
+        
+        // Map to Y position (inverted: lower notes at bottom)
+        return height - (semitone / totalSemitones) * height;
+    }
+    
+    /**
+     * Draw piano-style grid for notes plot
+     */
+    drawNotesGrid(width, height) {
+        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const blackKeys = ['C#', 'D#', 'F#', 'G#', 'A#'];
+        
+        this.notesCtx.lineWidth = 1 / this.viewState.zoom;
+        
+        // Draw horizontal grid lines for each semitone
+        for (let octave = 1; octave <= 8; octave++) {
+            for (let i = 0; i < noteNames.length; i++) {
+                const noteName = noteNames[i];
+                const noteString = `${noteName}${octave}`;
+                const y = this.noteToY(noteString, height);
+                
+                // Different style for white keys vs black keys
+                const isBlackKey = blackKeys.includes(noteName);
+                this.notesCtx.strokeStyle = isBlackKey ? 
+                    'rgba(255, 255, 255, 0.08)' : 
+                    'rgba(255, 255, 255, 0.15)';
+                
+                if (isBlackKey) {
+                    this.notesCtx.setLineDash([3 / this.viewState.zoom, 3 / this.viewState.zoom]);
+                } else {
+                    this.notesCtx.setLineDash([]);
+                }
+                
+                this.notesCtx.beginPath();
+                this.notesCtx.moveTo(0, y);
+                this.notesCtx.lineTo(width, y);
+                this.notesCtx.stroke();
+                
+                // Draw octave labels (only on C notes)
+                if (noteName === 'C') {
+                    this.notesCtx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                    this.notesCtx.font = `${14 / this.viewState.zoom}px Arial`;
+                    this.notesCtx.fillText(noteString, 5 / this.viewState.zoom, y - 5);
+                }
+            }
+        }
+        
+        // Reset line dash
+        this.notesCtx.setLineDash([]);
+        
+        // Draw vertical time grid (synchronized with frequency plot)
+        if (this.targetPitchData.length > 0) {
+            const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+            const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+            const timeRange = maxTime - minTime || 1;
+            
+            const timeStep = this.viewState.zoom > 3 ? 1 : (this.viewState.zoom > 1.5 ? 2 : 5);
+            
+            this.notesCtx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            
+            for (let time = minTime; time <= maxTime; time += timeStep) {
+                const x = ((time - minTime) / timeRange) * width;
+                
+                this.notesCtx.beginPath();
+                this.notesCtx.moveTo(x, 0);
+                this.notesCtx.lineTo(x, height);
+                this.notesCtx.stroke();
+                
+                // Draw time labels
+                this.notesCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                this.notesCtx.font = `${12 / this.viewState.zoom}px Arial`;
+                this.notesCtx.fillText(`${time.toFixed(1)}s`, x + 5 / this.viewState.zoom, height - 5);
+            }
+        }
+    }
+    
+    /**
+     * Draw note blocks on the notes plot
+     */
+    drawNotesPlot(pitchData, color, width, height) {
+        if (pitchData.length === 0) return;
+        
+        // Normalize time to canvas width
+        const maxTime = Math.max(...pitchData.map(p => p.time));
+        const minTime = Math.min(...pitchData.map(p => p.time));
+        const timeRange = maxTime - minTime || 1;
+        
+        // Group consecutive same-note points into blocks
+        const noteBlocks = [];
+        let currentBlock = null;
+        
+        for (const point of pitchData) {
+            const note = this.frequencyToNote(point.frequency);
+            const x = ((point.time - minTime) / timeRange) * width;
+            const y = this.noteToY(note, height);
+            
+            if (!currentBlock || currentBlock.note !== note) {
+                // Start new block
+                if (currentBlock) {
+                    noteBlocks.push(currentBlock);
+                }
+                currentBlock = {
+                    note: note,
+                    startX: x,
+                    endX: x,
+                    y: y,
+                    frequency: point.frequency
+                };
+            } else {
+                // Extend current block
+                currentBlock.endX = x;
+            }
+        }
+        
+        // Push the last block
+        if (currentBlock) {
+            noteBlocks.push(currentBlock);
+        }
+        
+        // Draw note blocks
+        this.notesCtx.fillStyle = color;
+        const blockHeight = 8; // Height of note block in pixels
+        
+        for (const block of noteBlocks) {
+            const blockWidth = Math.max(block.endX - block.startX, 3 / this.viewState.zoom);
+            
+            // Check if block is visible
+            const transformedX = block.startX * this.viewState.zoom + this.viewState.offsetX;
+            if (transformedX > -50 && transformedX < width * this.viewState.zoom + 50) {
+                // Draw rectangle for note block (with rounded caps via lineJoin)
+                this.notesCtx.fillRect(
+                    block.startX, 
+                    block.y - blockHeight / 2, 
+                    blockWidth, 
+                    blockHeight
+                );
+            }
+        }
     }
     
     showStatus(message, type) {

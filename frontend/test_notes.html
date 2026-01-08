@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notes Plot Test</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Notes Plot Test</h1>
+        
+        <div class="status success">Test data loaded - Notes plot should display below</div>
+        
+        <div class="info-panel">
+            <div class="info-item">
+                <span class="label">Test:</span>
+                <span>C Major Scale (C4 to C5)</span>
+            </div>
+            <div class="info-item">
+                <span class="label">Zoom:</span>
+                <span id="zoomLevel">100%</span>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button id="zoomInBtn" title="Zoom In">+</button>
+            <button id="zoomOutBtn" title="Zoom Out">-</button>
+            <button id="resetViewBtn" title="Reset View">⟲</button>
+        </div>
+        
+        <div class="canvas-container">
+            <h3 class="canvas-title">Notes Plot (Piano Roll)</h3>
+            <canvas id="notesCanvas"></canvas>
+            <div id="notesTooltip" class="tooltip" style="display: none;"></div>
+        </div>
+        
+        <div class="legend">
+            <span class="target-pitch">Test Notes</span>
+        </div>
+    </div>
+    
+    <script>
+        // Simple test version of PitchMatcher for notes plot only
+        class NotesPlotTest {
+            constructor() {
+                // View state (pan and zoom)
+                this.viewState = {
+                    offsetX: 0,
+                    offsetY: 0,
+                    zoom: 1,
+                    minZoom: 0.5,
+                    maxZoom: 10,
+                    isDragging: false,
+                    lastMouseX: 0,
+                    lastMouseY: 0
+                };
+                
+                // Generate test data - C major scale
+                this.targetPitchData = this.generateTestData();
+                
+                // Canvas setup
+                this.notesCanvas = document.getElementById('notesCanvas');
+                this.notesCtx = this.notesCanvas.getContext('2d');
+                this.setupNotesCanvas();
+                
+                // UI elements
+                this.zoomInBtn = document.getElementById('zoomInBtn');
+                this.zoomOutBtn = document.getElementById('zoomOutBtn');
+                this.resetViewBtn = document.getElementById('resetViewBtn');
+                this.zoomLevelSpan = document.getElementById('zoomLevel');
+                this.notesTooltip = document.getElementById('notesTooltip');
+                
+                this.bindEvents();
+                this.draw();
+            }
+            
+            generateTestData() {
+                // C major scale: C4, D4, E4, F4, G4, A4, B4, C5
+                const notes = [
+                    {time: 0.0, frequency: 261.63},  // C4
+                    {time: 0.5, frequency: 261.63},
+                    {time: 1.0, frequency: 293.66},  // D4
+                    {time: 1.5, frequency: 293.66},
+                    {time: 2.0, frequency: 329.63},  // E4
+                    {time: 2.5, frequency: 329.63},
+                    {time: 3.0, frequency: 349.23},  // F4
+                    {time: 3.5, frequency: 349.23},
+                    {time: 4.0, frequency: 392.00},  // G4
+                    {time: 4.5, frequency: 392.00},
+                    {time: 5.0, frequency: 440.00},  // A4
+                    {time: 5.5, frequency: 440.00},
+                    {time: 6.0, frequency: 493.88},  // B4
+                    {time: 6.5, frequency: 493.88},
+                    {time: 7.0, frequency: 523.25},  // C5
+                    {time: 7.5, frequency: 523.25}
+                ];
+                return notes;
+            }
+            
+            setupNotesCanvas() {
+                const rect = this.notesCanvas.getBoundingClientRect();
+                this.notesCanvas.width = rect.width;
+                this.notesCanvas.height = rect.height;
+            }
+            
+            bindEvents() {
+                this.zoomInBtn.addEventListener('click', () => this.zoomIn());
+                this.zoomOutBtn.addEventListener('click', () => this.zoomOut());
+                this.resetViewBtn.addEventListener('click', () => this.resetView());
+                
+                this.notesCanvas.addEventListener('wheel', (e) => this.handleWheel(e));
+                this.notesCanvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+                this.notesCanvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                this.notesCanvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+                this.notesCanvas.addEventListener('mouseleave', (e) => this.handleMouseLeave(e));
+                
+                window.addEventListener('resize', () => {
+                    this.setupNotesCanvas();
+                    this.draw();
+                });
+            }
+            
+            handleWheel(e) {
+                e.preventDefault();
+                const rect = this.notesCanvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+                const newZoom = Math.min(Math.max(this.viewState.zoom * zoomFactor, this.viewState.minZoom), this.viewState.maxZoom);
+                
+                if (newZoom !== this.viewState.zoom) {
+                    const zoomRatio = newZoom / this.viewState.zoom;
+                    this.viewState.offsetX = mouseX - (mouseX - this.viewState.offsetX) * zoomRatio;
+                    this.viewState.zoom = newZoom;
+                    this.updateZoomDisplay();
+                    this.draw();
+                }
+            }
+            
+            handleMouseDown(e) {
+                this.viewState.isDragging = true;
+                this.viewState.lastMouseX = e.clientX;
+                this.notesCanvas.style.cursor = 'grabbing';
+            }
+            
+            handleMouseMove(e) {
+                if (this.viewState.isDragging) {
+                    const deltaX = e.clientX - this.viewState.lastMouseX;
+                    this.viewState.offsetX += deltaX;
+                    this.viewState.lastMouseX = e.clientX;
+                    this.draw();
+                }
+            }
+            
+            handleMouseUp(e) {
+                this.viewState.isDragging = false;
+                this.notesCanvas.style.cursor = 'grab';
+            }
+            
+            handleMouseLeave(e) {
+                this.viewState.isDragging = false;
+                this.notesCanvas.style.cursor = 'grab';
+            }
+            
+            zoomIn() {
+                this.viewState.zoom = Math.min(this.viewState.zoom * 1.2, this.viewState.maxZoom);
+                this.updateZoomDisplay();
+                this.draw();
+            }
+            
+            zoomOut() {
+                this.viewState.zoom = Math.max(this.viewState.zoom / 1.2, this.viewState.minZoom);
+                this.updateZoomDisplay();
+                this.draw();
+            }
+            
+            resetView() {
+                this.viewState.offsetX = 0;
+                this.viewState.zoom = 1;
+                this.updateZoomDisplay();
+                this.draw();
+            }
+            
+            updateZoomDisplay() {
+                this.zoomLevelSpan.textContent = `${Math.round(this.viewState.zoom * 100)}%`;
+            }
+            
+            frequencyToNote(frequency) {
+                const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+                const noteNum = 12 * (Math.log2(frequency / 440)) + 69;
+                const octave = Math.floor((noteNum + 0.0001) / 12) - 1;
+                const note = notes[Math.round(noteNum + 0.0001) % 12];
+                return `${note}${octave}`;
+            }
+            
+            noteToY(noteString, height) {
+                const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+                const octave = parseInt(noteString.slice(-1));
+                const noteName = noteString.slice(0, -1);
+                const noteIndex = noteNames.indexOf(noteName);
+                
+                if (noteIndex === -1) return height / 2;
+                
+                const minOctave = 1;
+                const maxOctave = 8;
+                const totalSemitones = (maxOctave - minOctave) * 12;
+                const semitone = (octave - minOctave) * 12 + noteIndex;
+                
+                return height - (semitone / totalSemitones) * height;
+            }
+            
+            draw() {
+                const width = this.notesCanvas.offsetWidth;
+                const height = this.notesCanvas.offsetHeight;
+                
+                this.notesCtx.fillStyle = '#1a1a2e';
+                this.notesCtx.fillRect(0, 0, width, height);
+                
+                this.notesCtx.save();
+                this.notesCtx.translate(this.viewState.offsetX, 0);
+                this.notesCtx.scale(this.viewState.zoom, 1);
+                
+                this.drawNotesGrid(width, height);
+                this.drawNotesPlot(this.targetPitchData, 'rgba(0, 255, 136, 0.8)', width, height);
+                
+                this.notesCtx.restore();
+            }
+            
+            drawNotesGrid(width, height) {
+                const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+                const blackKeys = ['C#', 'D#', 'F#', 'G#', 'A#'];
+                
+                this.notesCtx.lineWidth = 1 / this.viewState.zoom;
+                
+                for (let octave = 1; octave <= 8; octave++) {
+                    for (let i = 0; i < noteNames.length; i++) {
+                        const noteName = noteNames[i];
+                        const noteString = `${noteName}${octave}`;
+                        const y = this.noteToY(noteString, height);
+                        
+                        const isBlackKey = blackKeys.includes(noteName);
+                        this.notesCtx.strokeStyle = isBlackKey ? 
+                            'rgba(255, 255, 255, 0.08)' : 
+                            'rgba(255, 255, 255, 0.15)';
+                        
+                        if (isBlackKey) {
+                            this.notesCtx.setLineDash([3 / this.viewState.zoom, 3 / this.viewState.zoom]);
+                        } else {
+                            this.notesCtx.setLineDash([]);
+                        }
+                        
+                        this.notesCtx.beginPath();
+                        this.notesCtx.moveTo(0, y);
+                        this.notesCtx.lineTo(width, y);
+                        this.notesCtx.stroke();
+                        
+                        if (noteName === 'C') {
+                            this.notesCtx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                            this.notesCtx.font = `${14 / this.viewState.zoom}px Arial`;
+                            this.notesCtx.fillText(noteString, 5 / this.viewState.zoom, y - 5);
+                        }
+                    }
+                }
+                
+                this.notesCtx.setLineDash([]);
+                
+                // Time grid
+                const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+                const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+                const timeRange = maxTime - minTime || 1;
+                const timeStep = 1;
+                
+                this.notesCtx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                
+                for (let time = minTime; time <= maxTime; time += timeStep) {
+                    const x = ((time - minTime) / timeRange) * width;
+                    this.notesCtx.beginPath();
+                    this.notesCtx.moveTo(x, 0);
+                    this.notesCtx.lineTo(x, height);
+                    this.notesCtx.stroke();
+                    
+                    this.notesCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    this.notesCtx.font = `${12 / this.viewState.zoom}px Arial`;
+                    this.notesCtx.fillText(`${time.toFixed(1)}s`, x + 5 / this.viewState.zoom, height - 5);
+                }
+            }
+            
+            drawNotesPlot(pitchData, color, width, height) {
+                if (pitchData.length === 0) return;
+                
+                const maxTime = Math.max(...pitchData.map(p => p.time));
+                const minTime = Math.min(...pitchData.map(p => p.time));
+                const timeRange = maxTime - minTime || 1;
+                
+                const noteBlocks = [];
+                let currentBlock = null;
+                
+                for (const point of pitchData) {
+                    const note = this.frequencyToNote(point.frequency);
+                    const x = ((point.time - minTime) / timeRange) * width;
+                    const y = this.noteToY(note, height);
+                    
+                    if (!currentBlock || currentBlock.note !== note) {
+                        if (currentBlock) {
+                            noteBlocks.push(currentBlock);
+                        }
+                        currentBlock = {
+                            note: note,
+                            startX: x,
+                            endX: x,
+                            y: y,
+                            frequency: point.frequency
+                        };
+                    } else {
+                        currentBlock.endX = x;
+                    }
+                }
+                
+                if (currentBlock) {
+                    noteBlocks.push(currentBlock);
+                }
+                
+                this.notesCtx.fillStyle = color;
+                const blockHeight = 8;
+                
+                for (const block of noteBlocks) {
+                    const blockWidth = Math.max(block.endX - block.startX, 3 / this.viewState.zoom);
+                    this.notesCtx.fillRect(
+                        block.startX, 
+                        block.y - blockHeight / 2, 
+                        blockWidth, 
+                        blockHeight
+                    );
+                }
+            }
+        }
+        
+        // Initialize test
+        document.addEventListener('DOMContentLoaded', () => {
+            new NotesPlotTest();
+        });
+    </script>
+</body>
+</html>

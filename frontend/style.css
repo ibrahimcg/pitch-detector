@@ -142,6 +142,13 @@ button:disabled {
     position: relative;
 }
 
+.canvas-title {
+    margin: 0 0 15px 0;
+    color: #333;
+    font-size: 18px;
+    font-weight: 600;
+}
+
 canvas {
     width: 100%;
     height: 400px;
