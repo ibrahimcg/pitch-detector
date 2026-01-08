@@ -1,4 +1,4 @@
-// Pitch Matcher - Main Application Logic
+// Pitch Matcher - Interactive Main Application Logic
 
 class PitchMatcher {
     constructor() {
@@ -14,6 +14,28 @@ class PitchMatcher {
         this.microphone = null;
         this.animationFrame = null;
         
+        // View state (pan and zoom)
+        this.viewState = {
+            offsetX: 0,
+            offsetY: 0,
+            zoom: 1,
+            minZoom: 0.5,
+            maxZoom: 10,
+            isDragging: false,
+            lastMouseX: 0,
+            lastMouseY: 0
+        };
+        
+        // Tooltip state
+        this.tooltipData = {
+            visible: false,
+            x: 0,
+            y: 0,
+            time: 0,
+            frequency: 0,
+            note: ''
+        };
+        
         // Canvas setup
         this.canvas = document.getElementById('pitchCanvas');
         this.ctx = this.canvas.getContext('2d');
@@ -24,20 +46,27 @@ class PitchMatcher {
         this.processBtn = document.getElementById('processBtn');
         this.startBtn = document.getElementById('startBtn');
         this.stopBtn = document.getElementById('stopBtn');
+        this.zoomInBtn = document.getElementById('zoomInBtn');
+        this.zoomOutBtn = document.getElementById('zoomOutBtn');
+        this.resetViewBtn = document.getElementById('resetViewBtn');
         this.statusDiv = document.getElementById('status');
         this.micStatusSpan = document.getElementById('micStatus');
         this.currentNoteSpan = document.getElementById('currentNote');
+        this.currentTimeSpan = document.getElementById('currentTime');
+        this.zoomLevelSpan = document.getElementById('zoomLevel');
+        this.tooltip = document.getElementById('tooltip');
         
         this.bindEvents();
     }
     
     setupCanvas() {
         // Set canvas size
-        this.canvas.width = this.canvas.offsetWidth * 2;
-        this.canvas.height = this.canvas.offsetHeight * 2;
+        const rect = this.canvas.getBoundingClientRect();
+        this.canvas.width = rect.width * 2;
+        this.canvas.height = rect.height * 2;
         this.ctx.scale(2, 2);
-        this.canvas.width = this.canvas.offsetWidth;
-        this.canvas.height = this.canvas.offsetHeight;
+        this.canvas.width = rect.width;
+        this.canvas.height = rect.height;
     }
     
     bindEvents() {
@@ -45,11 +74,176 @@ class PitchMatcher {
         this.startBtn.addEventListener('click', () => this.startMicrophone());
         this.stopBtn.addEventListener('click', () => this.stopMicrophone());
         
+        // Zoom controls
+        this.zoomInBtn.addEventListener('click', () => this.zoomIn());
+        this.zoomOutBtn.addEventListener('click', () => this.zoomOut());
+        this.resetViewBtn.addEventListener('click', () => this.resetView());
+        
+        // Canvas interactions
+        this.canvas.addEventListener('wheel', (e) => this.handleWheel(e));
+        this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+        this.canvas.addEventListener('mouseleave', (e) => this.handleMouseLeave(e));
+        
         // Handle window resize
         window.addEventListener('resize', () => {
             this.setupCanvas();
             this.draw();
         });
+    }
+    
+    // Pan and zoom methods
+    handleWheel(e) {
+        e.preventDefault();
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Zoom factor
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const newZoom = Math.min(Math.max(this.viewState.zoom * zoomFactor, this.viewState.minZoom), this.viewState.maxZoom);
+        
+        if (newZoom !== this.viewState.zoom) {
+            // Adjust offset to zoom towards mouse position
+            const zoomRatio = newZoom / this.viewState.zoom;
+            this.viewState.offsetX = mouseX - (mouseX - this.viewState.offsetX) * zoomRatio;
+            this.viewState.offsetY = mouseY - (mouseY - this.viewState.offsetY) * zoomRatio;
+            this.viewState.zoom = newZoom;
+            
+            this.updateZoomDisplay();
+            this.draw();
+        }
+    }
+    
+    handleMouseDown(e) {
+        this.viewState.isDragging = true;
+        this.viewState.lastMouseX = e.clientX;
+        this.viewState.lastMouseY = e.clientY;
+        this.canvas.style.cursor = 'grabbing';
+    }
+    
+    handleMouseMove(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        if (this.viewState.isDragging) {
+            const deltaX = e.clientX - this.viewState.lastMouseX;
+            const deltaY = e.clientY - this.viewState.lastMouseY;
+            
+            this.viewState.offsetX += deltaX;
+            this.viewState.offsetY += deltaY;
+            
+            this.viewState.lastMouseX = e.clientX;
+            this.viewState.lastMouseY = e.clientY;
+            
+            this.draw();
+        } else {
+            // Update tooltip
+            this.updateTooltip(mouseX, mouseY);
+        }
+    }
+    
+    handleMouseUp(e) {
+        this.viewState.isDragging = false;
+        this.canvas.style.cursor = 'grab';
+    }
+    
+    handleMouseLeave(e) {
+        this.viewState.isDragging = false;
+        this.tooltip.style.display = 'none';
+        this.tooltipData.visible = false;
+        this.canvas.style.cursor = 'grab';
+    }
+    
+    zoomIn() {
+        const newZoom = Math.min(this.viewState.zoom * 1.2, this.viewState.maxZoom);
+        this.viewState.zoom = newZoom;
+        this.updateZoomDisplay();
+        this.draw();
+    }
+    
+    zoomOut() {
+        const newZoom = Math.max(this.viewState.zoom / 1.2, this.viewState.minZoom);
+        this.viewState.zoom = newZoom;
+        this.updateZoomDisplay();
+        this.draw();
+    }
+    
+    resetView() {
+        this.viewState.offsetX = 0;
+        this.viewState.offsetY = 0;
+        this.viewState.zoom = 1;
+        this.updateZoomDisplay();
+        this.draw();
+    }
+    
+    updateZoomDisplay() {
+        this.zoomLevelSpan.textContent = `${Math.round(this.viewState.zoom * 100)}%`;
+    }
+    
+    updateTooltip(mouseX, mouseY) {
+        if (this.targetPitchData.length === 0) {
+            this.tooltip.style.display = 'none';
+            this.tooltipData.visible = false;
+            return;
+        }
+        
+        const width = this.canvas.offsetWidth;
+        const height = this.canvas.offsetHeight;
+        
+        // Get visible time range
+        const minFreq = 50;
+        const maxFreq = 1000;
+        const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+        const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+        const timeRange = maxTime - minTime || 1;
+        
+        // Calculate time at mouse position
+        const visibleWidth = width * this.viewState.zoom;
+        const visibleHeight = height * this.viewState.zoom;
+        
+        const time = ((mouseX - this.viewState.offsetX) / visibleWidth) * timeRange + minTime;
+        
+        // Find closest pitch point
+        let closestPoint = null;
+        let minDist = Infinity;
+        
+        for (const point of this.targetPitchData) {
+            const dist = Math.abs(point.time - time);
+            if (dist < minDist) {
+                minDist = dist;
+                closestPoint = point;
+            }
+        }
+        
+        if (closestPoint && minDist < 0.5) { // Only show if close enough
+            const note = this.frequencyToNote(closestPoint.frequency);
+            
+            this.tooltipData = {
+                visible: true,
+                x: mouseX + 15,
+                y: mouseY + 15,
+                time: closestPoint.time,
+                frequency: closestPoint.frequency,
+                note: note
+            };
+            
+            // Update tooltip position and content
+            this.tooltip.style.display = 'block';
+            this.tooltip.style.left = `${mouseX + 15}px`;
+            this.tooltip.style.top = `${mouseY + 15}px`;
+            this.tooltip.innerHTML = `
+                <div class="time">Time: ${closestPoint.time.toFixed(2)}s</div>
+                <div class="frequency">${closestPoint.frequency.toFixed(1)} Hz</div>
+                <div class="note">Note: ${note}</div>
+            `;
+        } else {
+            this.tooltip.style.display = 'none';
+            this.tooltipData.visible = false;
+        }
     }
     
     async processYouTubeUrl() {
@@ -81,7 +275,7 @@ class PitchMatcher {
                 this.targetPitchData = data.pitch_data;
                 this.showStatus(`Successfully extracted pitch data! Duration: ${data.duration.toFixed(1)}s`, 'success');
                 this.startBtn.disabled = false;
-                this.draw();
+                this.resetView();
             } else {
                 throw new Error(data.detail || 'Unknown error occurred');
             }
@@ -238,10 +432,11 @@ class PitchMatcher {
         
         // A4 = 440 Hz
         const noteNum = 12 * (Math.log2(frequency / 440)) + 69;
-        const octave = Math.floor((noteNum - 12 * Math.floor(noteNum / 12) + 12) / 12);
-        const note = notes[Math.round(noteNum) % 12];
+        // Add small epsilon to avoid floating-point precision issues
+        const octave = Math.floor((noteNum + 0.0001) / 12) - 1;
+        const note = notes[Math.round(noteNum + 0.0001) % 12];
         
-        return `${note}${Math.floor(octave)}`;
+        return `${note}${octave}`;
     }
     
     getCurrentTime() {
@@ -256,6 +451,13 @@ class PitchMatcher {
         this.ctx.fillStyle = '#1a1a2e';
         this.ctx.fillRect(0, 0, width, height);
         
+        // Save context for transformations
+        this.ctx.save();
+        
+        // Apply pan and zoom transformations
+        this.ctx.translate(this.viewState.offsetX, this.viewState.offsetY);
+        this.ctx.scale(this.viewState.zoom, this.viewState.zoom);
+        
         // Draw grid
         this.drawGrid(width, height);
         
@@ -268,31 +470,71 @@ class PitchMatcher {
         if (this.userPitchData.length > 0) {
             this.drawPitchCurve(this.userPitchData, '#ff6b6b', width, height);
         }
+        
+        // Restore context (undo transformations for fixed elements)
+        this.ctx.restore();
     }
     
     drawGrid(width, height) {
+        const visibleWidth = width * this.viewState.zoom;
+        const visibleHeight = height * this.viewState.zoom;
+        
         this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-        this.ctx.lineWidth = 1;
+        this.ctx.lineWidth = 1 / this.viewState.zoom; // Keep lines thin regardless of zoom
+        
+        // Calculate visible frequency range
+        const minFreq = 50;
+        const maxFreq = 1000;
         
         // Draw horizontal lines (frequency)
-        const minFreq = 50;  // Hz
-        const maxFreq = 1000; // Hz
+        const freqStep = this.viewState.zoom > 2 ? 100 : (this.viewState.zoom > 1.5 ? 50 : 100);
         
-        for (let freq = minFreq; freq <= maxFreq; freq += 100) {
+        for (let freq = minFreq; freq <= maxFreq; freq += freqStep) {
             const y = this.frequencyToY(freq, height, minFreq, maxFreq);
-            this.ctx.beginPath();
-            this.ctx.moveTo(0, y);
-            this.ctx.lineTo(width, y);
-            this.ctx.stroke();
+            
+            // Check if visible
+            const transformedY = y * this.viewState.zoom + this.viewState.offsetY;
+            if (transformedY > -50 && transformedY < height + 50) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, y);
+                this.ctx.lineTo(width, y);
+                this.ctx.stroke();
+                
+                // Draw note labels
+                if (freq % 200 === 0 || (freq % 100 === 0 && this.viewState.zoom > 1.5)) {
+                    const note = this.frequencyToNote(freq);
+                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    this.ctx.font = `${12 / this.viewState.zoom}px Arial`;
+                    this.ctx.fillText(`${note} (${freq}Hz)`, 5, y - 5 / this.viewState.zoom);
+                }
+            }
         }
         
-        // Draw note labels
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        this.ctx.font = '10px Arial';
-        
-        for (let freq = minFreq; freq <= maxFreq; freq += 200) {
-            const y = this.frequencyToY(freq, height, minFreq, maxFreq);
-            this.ctx.fillText(`${freq}Hz`, 5, y - 5);
+        // Draw vertical lines (time)
+        if (this.targetPitchData.length > 0) {
+            const maxTime = Math.max(...this.targetPitchData.map(p => p.time));
+            const minTime = Math.min(...this.targetPitchData.map(p => p.time));
+            const timeRange = maxTime - minTime || 1;
+            
+            const timeStep = this.viewState.zoom > 3 ? 1 : (this.viewState.zoom > 1.5 ? 2 : 5);
+            
+            for (let time = minTime; time <= maxTime; time += timeStep) {
+                const x = ((time - minTime) / timeRange) * width;
+                
+                // Check if visible
+                const transformedX = x * this.viewState.zoom + this.viewState.offsetX;
+                if (transformedX > -50 && transformedX < visibleWidth + 50) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, 0);
+                    this.ctx.lineTo(x, height);
+                    this.ctx.stroke();
+                    
+                    // Draw time labels
+                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    this.ctx.font = `${12 / this.viewState.zoom}px Arial`;
+                    this.ctx.fillText(`${time.toFixed(1)}s`, x + 5, height - 5 / this.viewState.zoom);
+                }
+            }
         }
     }
     
@@ -300,7 +542,9 @@ class PitchMatcher {
         if (pitchData.length < 2) return;
         
         this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 2;
+        this.ctx.lineWidth = 3 / this.viewState.zoom;
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
         this.ctx.beginPath();
         
         const minFreq = 50;
@@ -317,11 +561,19 @@ class PitchMatcher {
             const x = ((point.time - minTime) / timeRange) * width;
             const y = this.frequencyToY(point.frequency, height, minFreq, maxFreq);
             
-            if (firstPoint) {
-                this.ctx.moveTo(x, y);
-                firstPoint = false;
-            } else {
-                this.ctx.lineTo(x, y);
+            // Check if point is visible
+            const transformedX = x * this.viewState.zoom + this.viewState.offsetX;
+            const transformedY = y * this.viewState.zoom + this.viewState.offsetY;
+            
+            if (transformedX > -50 && transformedX < width * this.viewState.zoom + 50 &&
+                transformedY > -50 && transformedY < height * this.viewState.zoom + 50) {
+                
+                if (firstPoint) {
+                    this.ctx.moveTo(x, y);
+                    firstPoint = false;
+                } else {
+                    this.ctx.lineTo(x, y);
+                }
             }
         }
         
